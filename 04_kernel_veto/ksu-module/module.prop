@@ -1,0 +1,6 @@
+id=dexp_veto_autoarm
+name=Hacktivate-CSI DexProtector Veto
+version=v1
+versionCode=1
+author=Hacktivate-CSI
+description=[Hacktivate-CSI] Arms the in-kernel dexp_veto SIGKILL-veto at boot (uids.txt), and ships a WebUI for one-tap LIVE arm/disarm, uid-from-package resolve, verbose toggle, and a blocked-kill log. Open it from this module's WebUI button. Requires a Hacktivate-CSI kernel built with CONFIG_DEXP_VETO=y.

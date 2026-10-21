@@ -1,0 +1,4 @@
+# One app uid per line. Lines starting with # are ignored.
+# Find a uid:  adb shell su 0 -c "stat -c %u /data/data/<package>"
+# The driver protects ONE uid (last line wins). Change this, re-zip, reflash.
+10293

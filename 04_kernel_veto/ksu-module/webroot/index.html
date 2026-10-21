@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hacktivate-CSI Veto</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#181b22; --line:#262a33; --fg:#e7e9ee; --muted:#9aa3b2;
+    --on:#38d39f; --off:#3a3f4b; --danger:#ff6b6b; --accent:#5aa9ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 -apple-system,Roboto,Segoe UI,sans-serif;
+       padding:16px;padding-bottom:40px}
+  h1{font-size:19px;margin:4px 0 2px}
+  .sub{color:var(--muted);font-size:12.5px;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .state{font-size:22px;font-weight:700}
+  .state.armed{color:var(--on)} .state.off{color:var(--muted)}
+  .pill{font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+  label{display:block;color:var(--muted);font-size:12px;margin:10px 0 4px}
+  input{width:100%;background:#0c0e12;border:1px solid var(--line);color:var(--fg);
+        border-radius:10px;padding:11px 12px;font-size:15px}
+  button{appearance:none;border:0;border-radius:10px;padding:12px 14px;font-size:15px;font-weight:600;
+         color:#06130e;background:var(--on);width:100%;margin-top:10px}
+  button.sec{background:#232834;color:var(--fg)}
+  button.danger{background:var(--danger);color:#1a0606}
+  button:active{opacity:.8}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .toggle{width:54px;height:30px;border-radius:999px;background:var(--off);position:relative;transition:.15s;flex:0 0 auto}
+  .toggle.on{background:var(--on)}
+  .knob{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:.15s}
+  .toggle.on .knob{left:27px}
+  pre{background:#0c0e12;border:1px solid var(--line);border-radius:10px;padding:10px;margin:0;
+      font-size:11.5px;color:var(--muted);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
+  .muted{color:var(--muted);font-size:12px}
+  .err{color:var(--danger)}
+</style>
+</head>
+<body>
+  <h1>Hacktivate-CSI Veto</h1>
+  <div class="sub">DexProtector SIGKILL-veto &amp; /proc frida-hider · live control</div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <div id="state" class="state off">—</div>
+        <div id="target" class="muted">reading…</div>
+      </div>
+      <div style="text-align:right">
+        <div id="selinux" class="pill">SELinux —</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>App uid to protect</label>
+    <input id="uid" inputmode="numeric" placeholder="e.g. 10293">
+    <div id="pkgname" class="muted" style="margin-top:6px"></div>
+    <div class="grid2">
+      <button id="arm">Arm</button>
+      <button id="disarm" class="danger">Disarm</button>
+    </div>
+    <label style="margin-top:14px">…or type a package (uid auto-fills, and vice-versa)</label>
+    <input id="pkg" placeholder="com.playnet.androidtv.ads" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <button id="resolve" class="sec">Resolve &amp; fill uid</button>
+    <div id="msg" class="muted" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>Verbose kernel logging</div>
+      <div id="verbose" class="toggle"><div class="knob"></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:8px">
+      <strong>Recent kills blocked</strong>
+      <button id="refreshlog" class="sec" style="width:auto;margin:0;padding:6px 12px;font-size:13px">Refresh</button>
+    </div>
+    <pre id="log">—</pre>
+    <div class="muted" style="margin-top:6px">Each line names the sender pid that tried to SIGKILL the app.</div>
+  </div>
+
+<script>
+const NODE = "/sys/kernel/dexp_veto";
+// KernelSU WebUI exec bridge → Promise{errno,stdout,stderr}. Runs as root.
+function exec(cmd, opts){
+  return new Promise((resolve)=>{
+    const name = "kcb_"+Date.now()+"_"+Math.floor(Math.random()*1e6);
+    window[name] = (errno, stdout, stderr)=>{ resolve({errno,stdout:stdout||"",stderr:stderr||""}); try{delete window[name]}catch(e){} };
+    try{
+      if(typeof ksu==="undefined"||!ksu.exec) return resolve({errno:-1,stdout:"",stderr:"no ksu.exec (open via KernelSU WebUI)"});
+      ksu.exec(cmd, JSON.stringify(opts||{}), name);
+    }catch(e){ resolve({errno:-1,stdout:"",stderr:String(e)}); }
+  });
+}
+const $ = id => document.getElementById(id);
+const okUid = v => /^-?\d+$/.test(v);                 // integer only (prevents shell injection)
+const okPkg = v => /^[A-Za-z0-9_.]+$/.test(v);        // package chars only
+function msg(t,err){ const m=$("msg"); m.textContent=t; m.className="muted"+(err?" err":""); }
+
+async function refresh(){
+  const r = await exec("cat "+NODE+"/uid");
+  if(r.errno!==0){ $("state").textContent="no veto node"; $("state").className="state off";
+    $("target").innerHTML='<span class="err">kernel not flashed with CONFIG_DEXP_VETO?</span>'; return; }
+  const uid = r.stdout.trim();
+  const armed = uid && uid!=="-1";
+  $("state").textContent = armed ? "ARMED" : "disarmed";
+  $("state").className = "state "+(armed?"armed":"off");
+  $("target").textContent = armed ? ("protecting uid "+uid) : "inert (uid -1)";
+  if(armed && !$("uid").value) $("uid").value = uid;
+  const v = (await exec("cat "+NODE+"/verbose")).stdout.trim();
+  $("verbose").className = "toggle"+(v==="1"?" on":"");
+  const se = (await exec("getenforce")).stdout.trim();
+  if(se) $("selinux").textContent = "SELinux "+se;
+}
+async function setUid(val){
+  if(!okUid(val)){ msg("uid must be a number",true); return; }
+  const r = await exec("echo "+val+" > "+NODE+"/uid");
+  msg(r.errno===0 ? (val==="-1"?"disarmed":"armed uid "+val) : ("write failed: "+(r.stderr||r.errno)), r.errno!==0);
+  refresh();
+}
+$("arm").onclick     = ()=> setUid(($("uid").value||"").trim());
+$("disarm").onclick  = ()=> setUid("-1");
+
+// uid -> package (reverse lookup via `pm list packages -U`)
+async function pkgOfUid(uid){
+  const r = await exec("pm list packages -U | grep ' uid:"+uid+"$'");
+  if(r.errno!==0) return "";
+  const line = (r.stdout.trim().split("\n")[0]||"");
+  const m = line.match(/package:(\S+)\s+uid:/);
+  return m ? m[1] : "";
+}
+// package -> uid (via the app's data dir owner)
+async function uidOfPkg(pkg){
+  const r = await exec("stat -c %u /data/data/"+pkg);
+  const u = r.stdout.trim();
+  return (r.errno===0 && okUid(u)) ? u : "";
+}
+const debounce = (fn,ms=400)=>(...a)=>{ clearTimeout(fn._t); fn._t=setTimeout(()=>fn(...a),ms); };
+
+$("resolve").onclick = async ()=>{
+  const p=($("pkg").value||"").trim();
+  if(!okPkg(p)){ msg("invalid package name",true); return; }
+  const u = await uidOfPkg(p);
+  if(u){ $("uid").value=u; $("pkgname").textContent=p+" = uid "+u; msg(p+" → uid "+u); }
+  else msg("couldn't resolve (installed?)",true);
+};
+// live: type a uid -> show + fill its package
+$("uid").addEventListener("input", debounce(async ()=>{
+  const u=($("uid").value||"").trim();
+  if(!/^\d+$/.test(u)){ $("pkgname").textContent=""; return; }
+  $("pkgname").textContent="uid "+u+" → …";
+  const p=await pkgOfUid(u);
+  $("pkgname").textContent = p ? ("uid "+u+" = "+p) : ("uid "+u+" — no package found");
+  if(p) $("pkg").value=p;
+}));
+// live: type a package -> fill its uid
+$("pkg").addEventListener("input", debounce(async ()=>{
+  const p=($("pkg").value||"").trim();
+  if(!okPkg(p)) return;
+  const u=await uidOfPkg(p);
+  if(u){ $("uid").value=u; $("pkgname").textContent=p+" = uid "+u; }
+}));
+$("verbose").onclick = async ()=>{
+  const on = $("verbose").classList.contains("on");
+  await exec("echo "+(on?"0":"1")+" > "+NODE+"/verbose"); refresh();
+};
+$("refreshlog").onclick = async ()=>{
+  const r = await exec("dmesg | grep dexp_veto | tail -15");
+  $("log").textContent = r.stdout.trim() || (r.stderr? ("(dmesg blocked: "+r.stderr+")") : "(no veto events yet)");
+};
+refresh();
+</script>
+</body>
+</html>

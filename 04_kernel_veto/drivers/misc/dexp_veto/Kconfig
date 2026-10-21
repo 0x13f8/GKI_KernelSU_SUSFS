@@ -1,0 +1,12 @@
+config DEXP_VETO
+	bool "DexProtector SIGKILL veto (anti-watchdog)"
+	depends on KRETPROBES && KALLSYMS
+	default n
+	help
+	  Built-in driver that vetoes SIGKILL to a configurable app uid via a
+	  kretprobe on security_task_kill(), defeating DexProtector's external
+	  anti-frida watchdog. Control at runtime through /sys/kernel/dexp_veto/
+	  (uid, verbose, hide_uid). Inert until armed (uid defaults to -1).
+
+	  Say Y to compile it in. There is no loadable-module form (avoids the
+	  GKI MODVERSIONS/CRC problem). If unsure, say N.
