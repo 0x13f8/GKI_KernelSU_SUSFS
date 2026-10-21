@@ -173,6 +173,9 @@ jobs:
           kernel_version: ${{ inputs.kernel_version }}
           os_patch_level: ${{ inputs.os_patch_level }}
 
+      - name: Inject dexp_veto driver
+        run: bash 04_kernel_veto/fork-patch/inject.sh "$GITHUB_WORKSPACE/kernel"
+
       - name: Spoof /proc/config.gz With Stock Config
         uses: ./.github/actions/stock-config
         with:
